@@ -1,0 +1,128 @@
+---
+title: "hw2"
+author: "Brendon Chen"
+date: "2024-10-22"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(shiny)
+library(ggplot2)
+library(dplyr)
+
+data <- read.csv("https://github.com/ychen2286/stat436-hw2/raw/refs/heads/main/company.csv")
+data <- na.omit(data)  # Remove rows with NA values
+
+# Sort country names alphabetically (A-Z)
+sorted_countries <- sort(unique(data$country))
+
+# Define UI for application
+ui <- fluidPage(
+  titlePanel("Company Data"),
+  
+  # Dropdown input for selecting the variable and country
+  sidebarLayout(
+    sidebarPanel(
+      selectInput("var", 
+                  "Select a variable to plot against Prices (GBP):",
+                  choices = list("Select" = "",  # Add an empty option
+                                 "Revenue" = "revenue_ttm",
+                                 "Earnings" = "earnings_ttm",
+                                 "Market Capitalisation" = "marketcap",
+                                 "P/E Ratio" = "pe_ratio_ttm",
+                                 "Dividend Yield" = "dividend_yield_ttm")),
+      
+      selectInput("country", 
+                  "Select a country to filter:", 
+                  choices = c("All", sorted_countries),  # Sorted country names
+                  selected = "All")  # Default is 'All'
+    ),
+    
+    # Show the scatterplot, table, and bar plot
+    mainPanel(
+      plotOutput("scatterPlot", brush = brushOpts(id = "plot_brush")),
+      tableOutput("top10Table"),
+      plotOutput("barPlot")
+    )
+  )
+)
+
+# Define server logic
+server <- function(input, output) {
+  
+  # Reactive data based on country selection
+  filtered_data <- reactive({
+    if (input$country == "All") {
+      data  # If "All" is selected, return the full dataset
+    } else {
+      data %>% filter(country == input$country)  # Filter data by selected country
+    }
+  })
+  
+  # Generate the scatterplot based on input if a valid variable is selected
+  output$scatterPlot <- renderPlot({
+    req(input$var)  # Ensure the variable is selected
+    if (input$var != "") {  # Only generate scatterplot if a variable is chosen
+      ggplot(filtered_data(), aes_string(x = "GBP", y = input$var)) +
+        geom_point(color = "blue", size = 2, alpha = 0.7) +  # Smaller points, transparent
+        labs(x = "Prices (GBP)", 
+             y = input$var, 
+             title = paste("Scatter Plot: Prices vs", input$var)) +
+        theme_minimal() +
+        theme(panel.grid.major = element_line(color = "gray", linetype = "dashed"), 
+              plot.title = element_text(hjust = 0.5))  # Center title
+    }
+  })
+  
+  # Handle brushing event and return selected points
+  brushed_data <- reactive({
+    if (input$var != "") {
+      brushedPoints(filtered_data(), input$plot_brush, xvar = "GBP", yvar = input$var)
+    } else {
+      NULL  # Return NULL if no variable is selected
+    }
+  })
+  
+  # Reactive dataset: return either top 10 brushed data or top 10 companies by selected variable
+  top10_data <- reactive({
+    req(input$var)  # Ensure the variable is selected
+    if (!is.null(brushed_data()) && nrow(brushed_data()) > 0) {
+      # Select top 10 based on the selected variable within the brushed data
+      brushed_data() %>%
+        arrange(desc(!!sym(input$var))) %>%
+        top_n(10, !!sym(input$var))
+    } else {
+      # Default to top 10 highest by the selected variable within the filtered data
+      filtered_data() %>%
+        arrange(desc(!!sym(input$var))) %>%
+        top_n(10, !!sym(input$var))
+    }
+  })
+  
+  # Generate the table of selected companies or top 10 by selected variable
+  output$top10Table <- renderTable({
+    req(input$var)
+    top10_data() %>%
+      select(Name, Symbol, GBP, !!sym(input$var)) %>%
+      arrange(desc(!!sym(input$var)))  # Sort by the selected variable
+  })
+  
+  # Generate the bar plot: x-axis as company names, y-axis as the selected variable
+  output$barPlot <- renderPlot({
+    req(input$var)
+    ggplot(top10_data(), aes(x = reorder(Name, !!sym(input$var)), y = !!sym(input$var))) +  # Sort companies by selected variable
+      geom_bar(stat = "identity", fill = "skyblue") +
+      coord_flip() +  # Flip coordinates for better readability
+      labs(x = "Company", y = input$var, 
+           title = paste("Price vs", input$var)) +  # Dynamic title based on selected variable
+      theme_minimal()
+  })
+}
+
+shinyApp(ui = ui, server = server)
+```
+
